@@ -40,32 +40,72 @@ export class SolanaService implements BlockchainService {
             const publicKey = new PublicKey(address);
             const signatures = await this.connection.getSignaturesForAddress(publicKey, { limit });
 
+            console.log(`[Solana] Found ${signatures.length} signatures for address`);
+
             const transactions: Transaction[] = [];
 
             for (const sig of signatures) {
-                const tx = await this.connection.getTransaction(sig.signature, {
-                    maxSupportedTransactionVersion: 0,
-                });
+                try {
+                    const tx = await this.connection.getTransaction(sig.signature, {
+                        maxSupportedTransactionVersion: 0,
+                    });
 
-                if (!tx) continue;
+                    if (!tx || !tx.meta) {
+                        console.log(`[Solana] Skipping tx ${sig.signature} - no data`);
+                        continue;
+                    }
 
-                // Extract basic transaction info
-                const accountKeys = tx.transaction.message.getAccountKeys();
-                const from = accountKeys.get(0)?.toString() || '';
-                const to = accountKeys.get(1)?.toString() || '';
+                    // For versioned transactions, use staticAccountKeys instead
+                    let from = '';
+                    let to = '';
 
-                transactions.push({
-                    hash: sig.signature,
-                    from,
-                    to,
-                    value: '0', // Solana transactions are complex, would need detailed parsing
-                    timestamp: sig.blockTime || 0,
-                    chain: 'solana',
-                    fee: tx.meta?.fee ? (tx.meta.fee / LAMPORTS_PER_SOL).toString() : undefined,
-                    status: tx.meta?.err ? 'failed' : 'success',
-                });
+                    try {
+                        // Try to get account keys safely
+                        const message = tx.transaction.message;
+
+                        // Use staticAccountKeys for versioned transactions
+                        if ('staticAccountKeys' in message) {
+                            const keys = message.staticAccountKeys;
+                            from = keys[0]?.toString() || '';
+                            to = keys.length > 1 ? keys[1]?.toString() || '' : '';
+                        } else {
+                            // Legacy transaction
+                            const accountKeys = message.getAccountKeys();
+                            from = accountKeys.get(0)?.toString() || '';
+                            to = accountKeys.length > 1 ? accountKeys.get(1)?.toString() || '' : '';
+                        }
+                    } catch (keyError) {
+                        // If we can't get keys, use meta account keys
+                        if (tx.meta.preTokenBalances && tx.meta.preTokenBalances.length > 0) {
+                            from = tx.meta.preTokenBalances[0]?.owner || '';
+                        }
+                        console.log(`[Solana] Using fallback for tx ${sig.signature}`);
+                    }
+
+                    // Calculate value from balance changes
+                    let value = '0';
+                    if (tx.meta.preBalances && tx.meta.postBalances && tx.meta.preBalances.length > 0) {
+                        const balanceChange = Math.abs(tx.meta.postBalances[0] - tx.meta.preBalances[0]);
+                        value = (balanceChange / LAMPORTS_PER_SOL).toString();
+                    }
+
+                    transactions.push({
+                        hash: sig.signature,
+                        from: from || 'Unknown',
+                        to: to || 'Unknown',
+                        value,
+                        timestamp: sig.blockTime || 0,
+                        chain: 'solana',
+                        fee: tx.meta?.fee ? (tx.meta.fee / LAMPORTS_PER_SOL).toString() : undefined,
+                        status: tx.meta?.err ? 'failed' : 'success',
+                    });
+                } catch (txError: any) {
+                    console.error(`[Solana] Error parsing tx ${sig.signature}:`, txError.message);
+                    continue;
+                }
             }
 
+            console.log(`[Solana] Successfully parsed ${transactions.length} transactions`);
             return transactions;
         } catch (error) {
             console.error('[Solana] Failed to get transactions:', error);

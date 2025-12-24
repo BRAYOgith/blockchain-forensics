@@ -7,7 +7,8 @@ import { ethers } from 'ethers';
 import { BlockchainService, Transaction, PatternAnalysis } from './types';
 
 const BSCSCAN_API_URL = 'https://api.bscscan.com/api';
-const BSCSCAN_API_KEY = process.env.BSCSCAN_API_KEY || process.env.ETHERSCAN_API_KEY;
+// BscScan allows limited requests without API key
+const BSCSCAN_API_KEY = process.env.BSCSCAN_API_KEY || '';
 
 export class BNBService implements BlockchainService {
     validateAddress(address: string): boolean {
@@ -16,27 +17,49 @@ export class BNBService implements BlockchainService {
 
     async getBalance(address: string): Promise<string> {
         try {
-            const response = await fetch(
-                `${BSCSCAN_API_URL}?module=account&action=balance&address=${address}&apikey=${BSCSCAN_API_KEY}`
-            );
+            // Try without API key first (BscScan allows limited free requests)
+            const url = BSCSCAN_API_KEY
+                ? `${BSCSCAN_API_URL}?module=account&action=balance&address=${address}&apikey=${BSCSCAN_API_KEY}`
+                : `${BSCSCAN_API_URL}?module=account&action=balance&address=${address}`;
+
+            const response = await fetch(url);
             const data = await response.json();
+
+            console.log('[BNB Chain] API Response:', data);
 
             if (data.status === '1') {
                 return ethers.formatEther(data.result);
             }
 
+            // If API key issue, try using public RPC as fallback
+            if (data.message && data.message.includes('API')) {
+                console.log('[BNB Chain] Trying RPC fallback...');
+                const provider = new ethers.JsonRpcProvider('https://bsc-dataseed.binance.org/');
+                const balance = await provider.getBalance(address);
+                return ethers.formatEther(balance);
+            }
+
             throw new Error(data.message || 'Failed to fetch balance');
-        } catch (error) {
-            console.error('[BNB Chain] Failed to get balance:', error);
-            throw new Error('Failed to fetch BNB balance');
+        } catch (error: any) {
+            console.error('[BNB Chain] Failed to get balance:', error.message);
+            // Try RPC as final fallback
+            try {
+                const provider = new ethers.JsonRpcProvider('https://bsc-dataseed.binance.org/');
+                const balance = await provider.getBalance(address);
+                return ethers.formatEther(balance);
+            } catch (rpcError) {
+                throw new Error('Failed to fetch BNB balance from both API and RPC');
+            }
         }
     }
 
     async getTransactions(address: string, limit: number = 10): Promise<Transaction[]> {
         try {
-            const response = await fetch(
-                `${BSCSCAN_API_URL}?module=account&action=txlist&address=${address}&startblock=0&endblock=99999999&page=1&offset=${limit}&sort=desc&apikey=${BSCSCAN_API_KEY}`
-            );
+            const url = BSCSCAN_API_KEY
+                ? `${BSCSCAN_API_URL}?module=account&action=txlist&address=${address}&startblock=0&endblock=99999999&page=1&offset=${limit}&sort=desc&apikey=${BSCSCAN_API_KEY}`
+                : `${BSCSCAN_API_URL}?module=account&action=txlist&address=${address}&startblock=0&endblock=99999999&page=1&offset=${limit}&sort=desc`;
+
+            const response = await fetch(url);
             const data = await response.json();
 
             if (data.status === '1' && Array.isArray(data.result)) {
@@ -52,6 +75,7 @@ export class BNBService implements BlockchainService {
                 }));
             }
 
+            console.log('[BNB Chain] No transactions found or API limit reached');
             return [];
         } catch (error) {
             console.error('[BNB Chain] Failed to get transactions:', error);

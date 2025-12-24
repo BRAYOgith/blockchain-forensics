@@ -2,8 +2,9 @@
 
 import { useState } from 'react';
 import dynamic from 'next/dynamic';
-import { Search, ShieldAlert, Activity, DollarSign, LogOut } from 'lucide-react';
+import { Search, ShieldAlert, Activity, DollarSign, LogOut, Download, FileText } from 'lucide-react';
 import { signOut } from 'next-auth/react';
+import { generateReport, downloadReport } from '@/lib/report-generator';
 
 const GraphView = dynamic(() => import('@/components/GraphView'), { ssr: false });
 
@@ -106,6 +107,13 @@ export default function Home() {
     }
   };
 
+  const handleDownloadReport = (format: 'json' | 'txt') => {
+    if (!result) return;
+
+    const report = generateReport(result, 'Investigator');
+    downloadReport(report, format);
+  };
+
   // Process real transaction data for graph
   const graphData = result && result.transactions ? (() => {
     const nodesMap = new Map();
@@ -154,6 +162,26 @@ export default function Home() {
               <span className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></span>
               Mainnet Active
             </div>
+            {result && (
+              <div className="flex gap-2">
+                <button
+                  onClick={() => handleDownloadReport('txt')}
+                  className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg border border-blue-500 transition-all text-xs font-medium"
+                  title="Download Text Report"
+                >
+                  <FileText size={14} />
+                  Report (TXT)
+                </button>
+                <button
+                  onClick={() => handleDownloadReport('json')}
+                  className="flex items-center gap-2 px-4 py-2 bg-slate-900 hover:bg-slate-800 text-slate-400 hover:text-blue-400 rounded-lg border border-slate-800 transition-all text-xs font-medium"
+                  title="Download JSON Data"
+                >
+                  <Download size={14} />
+                  Data (JSON)
+                </button>
+              </div>
+            )}
             <button
               onClick={() => signOut()}
               className="flex items-center gap-2 px-4 py-2 bg-slate-900 hover:bg-red-500/10 text-slate-400 hover:text-red-500 rounded-lg border border-slate-800 transition-all text-xs font-medium"
